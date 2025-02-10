@@ -81,13 +81,6 @@ class LinkedInScraper:
         playwright, browser, context = await self.init_browser()
         page = await context.new_page()
         
-        # Enable stealth mode
-        await page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-        """)
-
         internships = []
         try:
             await page.goto(search_url)
@@ -103,14 +96,25 @@ class LinkedInScraper:
                     if len(internships) >= max_results:
                         break
                         
-                    job_data = {
-                        "title": await job.query_selector(".job-title").inner_text(),
-                        "company": await job.query_selector(".company-name").inner_text(),
-                        "location": await job.query_selector(".job-location").inner_text(),
-                        "link": await job.query_selector("a").get_attribute("href"),
-                        "scraped_at": datetime.now().isoformat()
-                    }
-                    internships.append(job_data)
+                    try:
+                        title_elem = await job.query_selector(".job-title")
+                        company_elem = await job.query_selector(".company-name")
+                        location_elem = await job.query_selector(".job-location")
+                        link_elem = await job.query_selector("a")
+                        
+                        if all([title_elem, company_elem, location_elem, link_elem]):
+                            job_data = {
+                                "title": await title_elem.inner_text(),
+                                "company": await company_elem.inner_text(),
+                                "location": await location_elem.inner_text(),
+                                "link": await link_elem.get_attribute("href"),
+                                "scraped_at": datetime.now().isoformat()
+                            }
+                            internships.append(job_data)
+                            print(f"Found job: {job_data['title']} at {job_data['company']}")
+                    except Exception as e:
+                        print(f"Error extracting job data: {e}")
+                        continue
 
                 # Click next page with random delay
                 next_button = await page.query_selector("button.next-page")

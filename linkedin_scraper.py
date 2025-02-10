@@ -172,6 +172,12 @@ class LinkedInScraper:
             writer.writeheader()
             writer.writerows(internships)
 
+SEARCH_URLS = [
+    "https://www.linkedin.com/jobs/search/?keywords=python%20developer%20internship&f_TPR=r604800&location=India",
+    "https://www.linkedin.com/jobs/search/?keywords=django%20developer%20internship&f_TPR=r604800&location=India",
+    "https://www.linkedin.com/jobs/search/?keywords=backend%20developer%20internship&f_TPR=r604800&location=India"
+]
+
 async def main():
     scraper = LinkedInScraper()
     

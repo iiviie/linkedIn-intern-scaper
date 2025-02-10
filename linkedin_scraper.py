@@ -6,6 +6,7 @@ from datetime import datetime
 import csv
 from typing import List, Dict
 import time
+import os
 
 class LinkedInScraper:
     def __init__(self):
@@ -35,10 +36,9 @@ class LinkedInScraper:
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
             bypass_csp=True,
             permissions=['geolocation'],
-            geolocation={'latitude': 40.7128, 'longitude': -74.0060},  # New York coordinates
+            geolocation={'latitude': 28.6139, 'longitude': 77.2090},  #New Delhi coordinates
         )
 
-        # Additional stealth settings
         await context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
             Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
@@ -46,7 +46,6 @@ class LinkedInScraper:
             window.chrome = { runtime: {} };
         """)
 
-        # Load stored cookies if available
         try:
             with open("linkedin_cookies.json", "r") as f:
                 cookies = json.load(f)
@@ -58,7 +57,6 @@ class LinkedInScraper:
 
     async def simulate_human_behavior(self, page):
         """Simulate realistic user behavior"""
-        # Random scroll
         await page.evaluate("""
             window.scrollTo({
                 top: Math.floor(Math.random() * window.innerHeight),
@@ -68,7 +66,6 @@ class LinkedInScraper:
         
         await asyncio.sleep(random.uniform(2, 5))
 
-        # Random mouse movements
         for _ in range(random.randint(3, 7)):
             await page.mouse.move(
                 random.randint(0, 1920),
@@ -89,24 +86,27 @@ class LinkedInScraper:
             while len(internships) < max_results:
                 await self.simulate_human_behavior(page)
 
-                # Extract job listings
-                jobs = await page.query_selector_all(".job-card-container")
+                # Updated selector for job cards
+                jobs = await page.query_selector_all("div.job-card-container.relative.job-card-list")
+                print(f"Found {len(jobs)} job cards on current page")
                 
                 for job in jobs:
                     if len(internships) >= max_results:
                         break
                         
                     try:
-                        title_elem = await job.query_selector(".job-title")
-                        company_elem = await job.query_selector(".company-name")
-                        location_elem = await job.query_selector(".job-location")
-                        link_elem = await job.query_selector("a")
+                        print("\nAttempting to extract job data...")
+                        # Updated selectors to match exact HTML structure
+                        title_elem = await job.query_selector(".job-card-list__title--link span strong")
+                        company_elem = await job.query_selector(".artdeco-entity-lockup__subtitle span")
+                        location_elem = await job.query_selector(".job-card-container__metadata-wrapper li span")
+                        link_elem = await job.query_selector(".job-card-list__title--link")
                         
                         if all([title_elem, company_elem, location_elem, link_elem]):
                             job_data = {
-                                "title": await title_elem.inner_text(),
-                                "company": await company_elem.inner_text(),
-                                "location": await location_elem.inner_text(),
+                                "title": (await title_elem.inner_text()).strip(),
+                                "company": (await company_elem.inner_text()).strip(),
+                                "location": (await location_elem.inner_text()).strip(),
                                 "link": await link_elem.get_attribute("href"),
                                 "scraped_at": datetime.now().isoformat()
                             }
@@ -116,16 +116,15 @@ class LinkedInScraper:
                         print(f"Error extracting job data: {e}")
                         continue
 
-                # Click next page with random delay
-                next_button = await page.query_selector("button.next-page")
+                next_button = await page.query_selector("button[aria-label='Next']")
                 if not next_button:
+                    print("No more pages to scrape")
                     break
                     
                 await asyncio.sleep(random.uniform(2, 4))
                 await next_button.click()
 
         finally:
-            # Save cookies for future use
             cookies = await context.cookies()
             with open("linkedin_cookies.json", "w") as f:
                 json.dump(cookies, f)
@@ -141,18 +140,14 @@ class LinkedInScraper:
         page = await context.new_page()
         
         try:
-            # Go to LinkedIn login page
             await page.goto('https://www.linkedin.com/login')
             print("Please login manually in the browser window...")
             print("After logging in, press Enter in this console to continue...")
             
-            # Wait for user input
             input()
             
-            # Give extra time for session to establish
             await asyncio.sleep(3)
             
-            # Save cookies
             cookies = await context.cookies()
             with open("linkedin_cookies.json", "w") as f:
                 json.dump(cookies, f)
@@ -163,31 +158,77 @@ class LinkedInScraper:
             await playwright.stop()
 
     def save_to_csv(self, internships: List[Dict], filename: str = "internships.csv"):
-        """Save results to CSV file"""
+        """Save results to CSV file in append mode"""
         if not internships:
+            print("No internships to save")
             return
 
-        with open(filename, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=internships[0].keys())
-            writer.writeheader()
-            writer.writerows(internships)
+        try:
+            print(f"Attempting to save to {os.path.abspath(filename)}")  # Debug print
+            file_exists = os.path.exists(filename)
+            
+            with open(filename, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=internships[0].keys())
+                if not file_exists:
+                    writer.writeheader()
+                    print(f"Created new CSV file: {filename}")
+                writer.writerows(internships)
+                print(f"Saved {len(internships)} new internships to {filename}")
+                
+        except Exception as e:
+            print(f"Error saving to CSV: {e}")
+
+    async def monitor_internships(self, search_urls: List[str], check_interval: int = 300):
+        """Continuously monitor for new internships"""
+        seen_jobs = set()  
+        
+        while True:
+            print("\n=== Starting new monitoring cycle ===")
+            for url in search_urls:
+                try:
+                    print(f"\nSearching URL: {url}")
+                    internships = await self.scrape_internships(url, max_results=100)
+                    print(f"Found {len(internships)} total internships on this search")
+                    
+                    new_jobs = 0
+                    for job in internships:
+                        job_id = f"{job['title']}_{job['company']}_{job['location']}"
+                        if job_id not in seen_jobs:
+                            seen_jobs.add(job_id)
+                            new_jobs += 1
+                            print("\n🆕 New Internship Found!")
+                            print(f"Title: {job['title']}")
+                            print(f"Company: {job['company']}")
+                            print(f"Location: {job['location']}")
+                            print(f"Link: {job['link']}")
+                            print("=" * 50)
+                            
+                            self.save_to_csv([job], "internships.csv")
+                    
+                    print(f"Found {new_jobs} new internships in this search")
+                    
+                except Exception as e:
+                    print(f"Error during scraping: {e}")
+                    continue
+                
+                await asyncio.sleep(random.uniform(5, 10))
+                
+            print(f"\nWaiting {check_interval/60} minutes before next check...")
+            await asyncio.sleep(check_interval)
 
 SEARCH_URLS = [
-    "https://www.linkedin.com/jobs/search/?keywords=python%20developer%20internship&f_TPR=r604800&location=India",
     "https://www.linkedin.com/jobs/search/?keywords=django%20developer%20internship&f_TPR=r604800&location=India",
-    "https://www.linkedin.com/jobs/search/?keywords=backend%20developer%20internship&f_TPR=r604800&location=India"
 ]
 
 async def main():
     scraper = LinkedInScraper()
     
-    # First time setup - wait for manual login
     await scraper.login_and_save_cookies()
     
-    # Now run the scraper
-    search_url = "https://www.linkedin.com/jobs/search/?keywords=internship&location=United%20States"
-    internships = await scraper.scrape_internships(search_url, max_results=50)
-    scraper.save_to_csv(internships)
+    await scraper.monitor_internships(
+        search_urls=SEARCH_URLS,
+        check_interval=300  
+    )
 
 if __name__ == "__main__":
     asyncio.run(main()) 

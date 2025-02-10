@@ -80,23 +80,31 @@ class LinkedInScraper:
         
         internships = []
         try:
-            await page.goto(search_url)
-            await asyncio.sleep(random.uniform(3, 5))
-
+            page_number = 0
             while len(internships) < max_results:
+                current_url = search_url
+                if page_number > 0:
+                    current_url = f"{search_url}&start={page_number * 25}"
+                
+                print(f"\nNavigating to page {page_number + 1}: {current_url}")
+                await page.goto(current_url)
+                await asyncio.sleep(random.uniform(3, 5))
                 await self.simulate_human_behavior(page)
 
-                # Updated selector for job cards
+                # Get jobs on current page
                 jobs = await page.query_selector_all("div.job-card-container.relative.job-card-list")
                 print(f"Found {len(jobs)} job cards on current page")
                 
+                if not jobs:
+                    print("No more job cards found")
+                    break
+
                 for job in jobs:
                     if len(internships) >= max_results:
                         break
                         
                     try:
                         print("\nAttempting to extract job data...")
-                        # Updated selectors to match exact HTML structure
                         title_elem = await job.query_selector(".job-card-list__title--link span strong")
                         company_elem = await job.query_selector(".artdeco-entity-lockup__subtitle span")
                         location_elem = await job.query_selector(".job-card-container__metadata-wrapper li span")
@@ -116,13 +124,14 @@ class LinkedInScraper:
                         print(f"Error extracting job data: {e}")
                         continue
 
-                next_button = await page.query_selector("button[aria-label='Next']")
-                if not next_button:
-                    print("No more pages to scrape")
-                    break
-                    
-                await asyncio.sleep(random.uniform(2, 4))
-                await next_button.click()
+                page_number += 1
+                # Check if there are more results
+                total_results = await page.query_selector(".jobs-search-results-list__subtitle")
+                if total_results:
+                    total_text = await total_results.inner_text()
+                    if "25" in total_text and page_number * 25 >= int(total_text.split()[0]):
+                        print("Reached end of results")
+                        break
 
         finally:
             cookies = await context.cookies()
@@ -217,7 +226,9 @@ class LinkedInScraper:
             await asyncio.sleep(check_interval)
 
 SEARCH_URLS = [
+    "https://www.linkedin.com/jobs/search/?keywords=python%20developer%20internship&f_TPR=r604800&location=India",
     "https://www.linkedin.com/jobs/search/?keywords=django%20developer%20internship&f_TPR=r604800&location=India",
+    "https://www.linkedin.com/jobs/search/?keywords=backend%20developer%20internship&f_TPR=r604800&location=India"
 ]
 
 async def main():
